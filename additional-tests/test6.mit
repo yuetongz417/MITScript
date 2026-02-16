@@ -1,0 +1,34 @@
+// A more complex program combining multiple features
+global user_count;
+user_count = 0;
+
+create_user = fun(name, age) {
+    global user_count;
+    user_count = user_count + 1;
+
+    user = {
+        id: user_count;
+        name: name;
+        age: age;
+        active: true;
+    };
+
+    return user;
+};
+
+get_user_info = fun(user) {
+    if (user.active) {
+        return "User " + user.name + " (ID: " + user.id + ") is active";
+    } else {
+        return "User " + user.name + " is inactive";
+    }
+};
+
+// Create users
+alice = create_user("Alice", 25);
+bob = create_user("Bob", 30);
+
+// Print user info
+print(get_user_info(alice));
+print(get_user_info(bob));
+print("Total users: " + user_count);

@@ -1,0 +1,10 @@
+compute = fun(a, b) {
+    if (b == 0) {
+        return a / b;
+    }
+    print(b);
+    return a / (b - 1);
+};
+
+result = compute(10, 1);
+print(result);

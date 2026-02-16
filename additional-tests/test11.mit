@@ -1,0 +1,11 @@
+expect_num = input();
+x = fun(x) {
+    print(intcast(expect_num) + x + " is my result");
+    print(expect_num + x + " is NOT my result");
+    y = fun(y){
+        print(x + y);
+    };
+    return y;
+};
+new = x(1);
+new(2);

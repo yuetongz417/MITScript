@@ -1,0 +1,31 @@
+counter = 0;
+
+factory = fun(start) {
+    this = {local: start * 10;};
+    counter = start;
+    global counter;
+
+
+    inc = fun() {
+        global counter;
+        counter = counter + 1;
+        this.local = this.local + 100;
+        print("global=" + counter + " local=" + this.local);
+    };
+
+    getLocal = fun() {
+        return this.local;
+    };
+
+    return {inc: inc; get: getLocal;};
+};
+
+obj1 = factory(5);
+obj2 = factory(10);
+
+obj1.inc();
+obj2.inc();
+obj1.inc();
+print(obj1.get());
+print(obj2.get());
+print(counter);

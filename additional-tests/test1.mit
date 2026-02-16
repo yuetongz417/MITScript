@@ -1,0 +1,6 @@
+
+// Simple arithmetic operations
+x = 5 + 3 * 2;
+y = (10 - 4) / 2;
+result = (x + y) * x == y;
+print("Result: " + result);

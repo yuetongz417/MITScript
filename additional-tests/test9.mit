@@ -1,0 +1,38 @@
+// Build a list-like structure using records
+makeList = fun(head, tail) {
+    return {
+        head: head;
+        tail: tail;
+    };
+};
+
+list = makeList(1, makeList(2, makeList(3, None)));
+
+// Function to sum a list
+sumList = fun(l) {
+    if (l == None) {
+        return 0;
+    } else {
+        return l.head + sumList(l.tail);
+    }
+};
+
+// Function to map over a list
+mapList = fun(f, l) {
+    if (l == None) {
+        return None;
+    } else {
+        return makeList(f(l.head), mapList(f, l.tail));
+    }
+};
+
+// Use native functions
+double = fun(x) { return x * 2; };
+list2 = mapList(double, list);
+
+print("Original sum: " + str(sumList(list)));
+print("Doubled sum: " + str(sumList(list2)));
+
+// Input example
+// userInput = input();
+// print("You entered: " + userInput);

@@ -1,0 +1,11 @@
+
+// Records
+person = {
+    name: "John Doe";
+    age: 30;
+    city: "Boston";
+};
+
+greeting = "Hello, " + person.name;
+info = person["age"] + " years old";
+person.email = "john@example.com";

@@ -1,0 +1,29 @@
+makeCounter = fun(start, step) {
+    this = {current: start;};
+
+    getNext = fun() {
+        result = this.current;
+        this.current = result + step;
+        return result;
+    };
+
+    reset = fun() {
+        this.current = start;
+        return None;
+    };
+
+    return {next: getNext; reset: reset;};
+};
+
+c1 = makeCounter(0, 5);
+c2 = makeCounter(100, 10);
+
+print(c1.next());
+print(c1.next());
+print(c2.next());
+print(c1.next());
+print(c2.next());
+
+c1.reset();
+print(c1.next());
+print(c2.next());

@@ -1,0 +1,28 @@
+// Test complex nested arithmetic with all operator types
+result1 = (((5 + 3 * 2) - (8 / 4)) + ((10 - 2) * (3 + 1))) / ((6 + 4) - (2 * 1));
+print(result1);
+
+// Test unary operators mixed with binary operators
+result2 = -(-5 + 3) * !(!true & false) - (-(-10));
+print(result2);
+
+// Test deeply nested parentheses with mixed precedence
+result3 = ((((1 + 2) * ((3 - 4) / 5)) + ((6 * 7) - (8 / 9))) * (((10 + 11) - (12 * 13)) / ((14 + 15) - (16 / 17))));
+print(result3);
+
+// Test string concatenation mixed with arithmetic
+result4 = "Value: " + ((2 + 3 * 4) - (10 / 2)) + " units";
+print(result4);
+
+// Test comparison operators within arithmetic context
+result5 = ((5 < 10) & (3 > 1)) == true;  // Should evaluate to 1 (true)
+result6 = ((2 + 3) == (4 + 1)) & ((6 * 2) > (10 - 1));
+print(result5);
+print(result6);
+
+// Test function calls within arithmetic expressions
+square = fun(x) { return x * x; };
+cube = fun(x) { return x * x * x; };
+
+result7 = (square(2 + 3) + cube(4 - 1)) / (square(5) - cube(2));
+print(result7);

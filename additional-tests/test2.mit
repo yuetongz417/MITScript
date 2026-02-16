@@ -1,0 +1,12 @@
+x = fun (n, x, y) {
+    if (n <= 1) {
+        return 1;
+    } else {
+        return n * factorial(n - 1);
+    }
+};
+// new global result
+global           result;
+
+result = factorial(5);
+return result;

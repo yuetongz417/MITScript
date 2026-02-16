@@ -1,0 +1,47 @@
+// Test record field access in arithmetic
+point = {
+    x: 10;
+    y: 20;
+    z: 30;
+};
+
+result8 = (point.x * point.y) + (point.z / 2) - (point["x"] + point["y"]);
+print(result8);
+
+// Test extremely deep nesting
+result9 = (((((((1 + 2) * 3) - 4) / 5) + 6) * 7) - 8) / 9 + (((10 - 11) * 12) / 13);
+print(result9);
+
+// Test operator precedence without parentheses (should follow natural precedence)
+result10 = 5 + 3 * 2 - 8 / 4 + 2;  // Should be: 5 + 6 - 2 + 2 = 11
+result11 = 10 - 2 * 3 + 4 / 2;     // Should be: 10 - 6 + 2 = 6
+result12 = !true & false | true;    // Should be: false & false | true = false | true = true
+
+print(result10);
+print(result11);
+print(result12);
+
+// Test mixed types with casting in arithmetic
+result13 = "Number: " + (5 + (3 * 2)) + " and boolean: " + ((5 > 3) == true);
+print(result13);
+
+// Test nested function calls with arithmetic
+add = fun(a, b) { return a + b; };
+multiply = fun(a, b) { return a * b; };
+
+result14 = add(multiply(2, add(3, 4)), multiply(add(1, 2), 3));
+// Breakdown: multiply(2, 7) = 14, multiply(3, 3) = 9, add(14, 9) = 23
+print(result14);
+
+// Test array-style access with arithmetic
+values = {
+    first: 10;
+    second: 20;
+    third: 30;
+};
+
+index = "second";
+result15 = (values.first + values[index]) * (values.third - values.first);
+print(result15);
+
+print("All nested arithmetic tests completed!");

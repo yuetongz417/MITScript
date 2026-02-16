@@ -1,0 +1,21 @@
+x = 1;
+outer = fun() {
+    x = 2;
+    global x;
+    middle = fun() {
+        y = x; // should be None, since x is in assign(s) of middle // x is local here
+        x = 10;
+        inner = fun() {
+            print(x); // 10
+            print(y); // None
+        };
+        return inner;
+    };
+    x = 3;
+    return middle;
+};
+
+f1 = outer();
+f2 = f1();
+f2();
+print(x); // 3, since global dec.

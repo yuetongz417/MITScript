@@ -1,0 +1,54 @@
+findNthPrime = fun(n) {
+    if (n < 1) {
+        return None;
+    }
+
+    count = 0;
+    candidate = 2;
+
+    while (true) {
+        // Check if candidate is prime
+        isPrime = true;
+        divisor = 2;
+
+        while (divisor * divisor <= candidate) {
+            if (candidate / divisor * divisor == candidate) {
+                isPrime = false;
+                divisor = candidate;
+            }
+            divisor = divisor + 1;
+        }
+
+        if (isPrime) {
+            count = count + 1;
+            print("Found prime #" + count + ": " + candidate);
+
+            if (count == n) {
+                return candidate;
+            }
+        }
+
+        candidate = candidate + 1;
+
+        if (candidate > 1000) {
+            print("Search limit exceeded");
+            return None;
+        }
+    }
+
+    return None;
+};
+
+print("Finding the 5th prime number:");
+result = findNthPrime(5);
+print("Result: " + result);
+
+print("");
+print("Finding the 10th prime number:");
+result2 = findNthPrime(10);
+print("Result: " + result2);
+
+print("");
+print("Finding the 0th prime (invalid):");
+result3 = findNthPrime(0);
+print("Result: " + result3);

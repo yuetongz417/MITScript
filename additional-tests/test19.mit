@@ -1,0 +1,61 @@
+// test_native_wrapper_chain.mit
+callCount = 0;
+
+// Save original native functions
+originalPrint = print;
+originalInput = input;
+originalIntcast = intcast;
+
+// Create logging wrapper for print
+print = fun(msg) {
+    global callCount;
+    callCount = callCount + 1;
+    originalPrint("PRINT[" + callCount + "]: " + msg);
+};
+
+// Create validating wrapper for intcast
+intcast = fun(s) {
+    global callCount;
+    callCount = callCount + 1;
+    originalPrint("INTCAST[" + callCount + "]: attempting to cast '" + s + "'");
+    result = originalIntcast(s);
+    originalPrint("INTCAST[" + callCount + "]: success, result = " + result);
+    return result;
+};
+
+// Test the wrappers
+print("Starting test");
+x = intcast("42");
+print("x = " + x);
+y = intcast("100");
+print("y = " + y);
+sum = x + y;
+print("sum = " + sum);
+
+// Create a function that uses wrapped print
+logger = fun(prefix) {
+    return fun(msg) {
+        print(prefix + msg);
+    };
+};
+
+infoLog = logger("[INFO] ");
+errorLog = logger("[ERROR] ");
+
+infoLog("System initialized");
+errorLog("Something went wrong");
+infoLog("Recovered successfully");
+
+// Restore and compare
+print = originalPrint;
+print("--- After restore ---");
+print("Total calls tracked: " + callCount);
+
+// Create double wrapper
+tempPrint = print;
+print = fun(msg) {
+    tempPrint(">>> " + msg);
+};
+
+print("Double wrapped message");
+print("Another double wrapped message");

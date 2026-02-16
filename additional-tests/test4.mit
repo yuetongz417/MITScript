@@ -1,0 +1,10 @@
+// Test string escapes and edge cases
+message = "He said \"Hello!\" and used a backslash: \\";
+newline_text = "Line 1\nLine 2\tTabbed";
+empty_string = "";
+bad_array = hi[here];
+bad_record = {name: "test"; age: 25;};   // midline comment
+
+weird_var = abc123;
+number = 999999999;
+boolean_vals = true & false | !true;

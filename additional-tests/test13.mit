@@ -1,0 +1,9 @@
+outer = fun() {
+    inner = fun() {
+        print(x);
+    };
+    return inner;
+};
+
+f = outer();
+f();

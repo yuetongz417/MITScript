@@ -1,0 +1,39 @@
+add = fun(a, b) { return a + b; };
+multiply = fun(a, b) { return a * b; };
+
+// Function call in expression
+result = add(multiply(2, 3), 4);
+
+// Function call in condition
+max_val = fun(a, b) {
+    if (a > b) {
+        return a;
+    } else {
+        return b;
+    }
+};
+
+largest = max_val(10, 20);
+
+outer = fun(x) {
+    inner = fun(y) {
+        return y * 2;
+    };
+    return inner(x) + 1;
+};
+
+result = outer(5);
+
+// Record with computed field names
+data = {};
+field_name = "dynamic_field";
+data[field_name] = "dynamic_value";
+data["key_" + "suffix"] = 42;
+
+// Record field access with expressions
+config = {
+    max_items: 100;
+    prefix: "item_";
+};
+
+limit = config["max" + "_items"];

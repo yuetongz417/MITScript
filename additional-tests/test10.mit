@@ -1,0 +1,21 @@
+createPerson = fun(name, age) {
+    return {
+        name: name;
+        age: age;
+        greet: fun() {
+            return "Hello, I'm " + this.name;
+        };
+    };
+};
+
+p1 = createPerson("Alice", 30);
+p2 = createPerson("Bob", 25);
+
+field = "age";
+print(p1["name"]);       // Static access
+print(p1[field]);        // Dynamic access
+print(p1.greet());       // Method call
+
+// Update record dynamically
+p1["age"] = 31;
+print(p1.age);

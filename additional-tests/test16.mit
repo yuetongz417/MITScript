@@ -1,0 +1,10 @@
+f = fun(a, b, c) {
+    return a + b + c;
+};
+
+g = fun(x) {
+    return f(x, x);
+};
+print(f("hello", "world", "!"));
+print(f(1, 2, 3));
+print(g(5));
