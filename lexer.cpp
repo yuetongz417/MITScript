@@ -1,457 +1,285 @@
-#include "lexer.hpp"
+#include "./lexer.hpp"
+#include "./token.hpp"
 
-#include <iostream>
-#include <sstream>
-#include <fstream>
-#include <unordered_map>
-#include <optional>
-#include <algorithm>
 #include <cctype>
+#include <iostream>
+#include <optional>
+#include <sstream>
+#include <vector>
 
-static bool isComment(const std::string &contents, int i)
-{
-    return i + 1 < contents.size() && contents[i] == '/' && contents[i + 1] == '/';
+static std::vector<std::tuple<std::string, bytecode::TokenKind>>
+    keyword_to_token{{"None", bytecode::TokenKind::NONE},
+                     {"true", bytecode::TokenKind::TRUE},
+                     {"false", bytecode::TokenKind::FALSE},
+                     {"function", bytecode::TokenKind::FUNCTION},
+                     {"functions", bytecode::TokenKind::FUNCTIONS},
+                     {"constants", bytecode::TokenKind::CONSTANTS},
+                     {"parameter_count", bytecode::TokenKind::PARAMETER_COUNT},
+                     {"local_vars", bytecode::TokenKind::LOCAL_VARS},
+                     {"local_ref_vars", bytecode::TokenKind::LOCAL_REF_VARS},
+                     {"names", bytecode::TokenKind::NAMES},
+                     {"free_vars", bytecode::TokenKind::FREE_VARS},
+                     {"instructions", bytecode::TokenKind::INSTRUCTIONS},
+                     {"load_const", bytecode::TokenKind::LOAD_CONST},
+                     {"load_func", bytecode::TokenKind::LOAD_FUNC},
+                     {"load_local", bytecode::TokenKind::LOAD_LOCAL},
+                     {"store_local", bytecode::TokenKind::STORE_LOCAL},
+                     {"load_global", bytecode::TokenKind::LOAD_GLOBAL},
+                     {"store_global", bytecode::TokenKind::STORE_GLOBAL},
+                     {"push_ref", bytecode::TokenKind::PUSH_REF},
+                     {"load_ref", bytecode::TokenKind::LOAD_REF},
+                     {"store_ref", bytecode::TokenKind::STORE_REF},
+                     {"alloc_record", bytecode::TokenKind::ALLOC_RECORD},
+                     {"field_load", bytecode::TokenKind::FIELD_LOAD},
+                     {"field_store", bytecode::TokenKind::FIELD_STORE},
+                     {"index_load", bytecode::TokenKind::INDEX_LOAD},
+                     {"index_store", bytecode::TokenKind::INDEX_STORE},
+                     {"alloc_closure", bytecode::TokenKind::ALLOC_CLOSURE},
+                     {"call", bytecode::TokenKind::CALL},
+                     {"return", bytecode::TokenKind::RETURN},
+                     {"add", bytecode::TokenKind::ADD},
+                     {"sub", bytecode::TokenKind::SUB},
+                     {"mul", bytecode::TokenKind::MUL},
+                     {"div", bytecode::TokenKind::DIV},
+                     {"neg", bytecode::TokenKind::NEG},
+                     {"gt", bytecode::TokenKind::GT},
+                     {"geq", bytecode::TokenKind::GEQ},
+                     {"eq", bytecode::TokenKind::EQ},
+                     {"and", bytecode::TokenKind::AND},
+                     {"or", bytecode::TokenKind::OR},
+                     {"not", bytecode::TokenKind::NOT},
+                     {"goto", bytecode::TokenKind::GOTO},
+                     {"if", bytecode::TokenKind::IF},
+                     {"dup", bytecode::TokenKind::DUP},
+                     {"swap", bytecode::TokenKind::SWAP},
+                     {"pop", bytecode::TokenKind::POP}};
+
+static std::vector<std::tuple<std::string, bytecode::TokenKind>>
+    symbol_to_token{
+        {"[", bytecode::TokenKind::LBRACKET},
+        {"]", bytecode::TokenKind::RBRACKET},
+        {"(", bytecode::TokenKind::LPAREN},
+        {")", bytecode::TokenKind::RPAREN},
+        {"{", bytecode::TokenKind::LBRACE},
+        {"}", bytecode::TokenKind::RBRACE},
+        {"=", bytecode::TokenKind::ASSIGN},
+        {",", bytecode::TokenKind::COMMA},
+    };
+
+static int is_comment(int c) { return c != '\r' && c != '\n'; }
+
+static int is_identifier_start(int c) { return std::isalpha(c) || c == '_'; }
+
+static int is_identifier_continue(int c) { return std::isalnum(c) || c == '_'; }
+
+bytecode::Lexer::Lexer(const std::string &file_contents)
+    : rest(file_contents), current_line(1), current_col(1) {}
+
+std::vector<bytecode::Token> bytecode::Lexer::lex() {
+  std::vector<bytecode::Token> result;
+  while (!is_eof()) {
+    if (lex_comment())
+      continue;
+    if (auto token = lex_symbol()) {
+      result.push_back(*token);
+      continue;
+    }
+    if (auto token = lex_intliteral()) {
+      result.push_back(*token);
+      continue;
+    }
+    if (auto token = lex_identifier_or_keyword()) {
+      result.push_back(*token);
+      continue;
+    }
+    if (auto token = lex_stringliteral()) {
+      result.push_back(*token);
+      continue;
+    }
+
+    if (lex_whitespace())
+      continue;
+
+    std::cerr << "Error: Unexpected character '" << peek() << "' at line "
+              << current_line << ", column " << current_col << std::endl;
+    std::exit(1);
+  }
+  result.emplace_back(bytecode::TokenKind::EOF_TOKEN, "", current_line, current_col, current_line, current_col);
+  return result;
 }
 
-static bool isWhitespace(char c)
-{
-    return std::isspace(static_cast<unsigned char>(c));
+bool bytecode::Lexer::lex_whitespace() {
+  if (!is_eof() && std::isspace(peek())) {
+    consume(1);
+    return true;
+  }
+  return false;
 }
 
-static const std::unordered_map<char, TokenType> symbolTable = {
-    {';', TokenType::Semicolon},
-    {'=', TokenType::Assign},
-    {',', TokenType::Comma},
-    {'{', TokenType::LBrace},
-    {'}', TokenType::RBrace},
-    {'(', TokenType::LParen},
-    {')', TokenType::RParen},
-    {'[', TokenType::LSquareBrace},
-    {']', TokenType::RSquareBrace},
-    {'+', TokenType::Add},
-    {'-', TokenType::Sub},
-    {'*', TokenType::Mul},
-    {'/', TokenType::Div},
-    {'&', TokenType::And},
-    {'|', TokenType::Or},
-    {'!', TokenType::Not},
-    {'.', TokenType::Dot},
-    {':', TokenType::Colon}};
+bool bytecode::Lexer::lex_comment() {
+  if (this->rest.substr(0, 2) == "//") {
+    std::string text = take_while<is_comment>();
+    consume(text.length());
+    return true;
+  }
+  return false;
+}
 
-std::optional<Token> Lexer::readSymbol(const std::string &contents, int &i, int lineNum)
-{
-    auto it = symbolTable.find(contents[i]);
-    if (it == symbolTable.end())
-        return std::nullopt;
-    Token tok{it->second, std::string(1, contents[i]), lineNum};
+std::optional<bytecode::Token> bytecode::Lexer::lex_symbol() {
+  for (const auto &[symbol, token] : symbol_to_token) {
+    if (this->rest.substr(0, symbol.length()) == symbol) {
+      auto start_line = this->current_line;
+      auto start_col = this->current_col;
+      std::string text = consume(symbol.length());
+      return bytecode::Token(token, text, start_line, start_col, this->current_line, this->current_col);
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<bytecode::Token> bytecode::Lexer::lex_intliteral() {
+  if (!is_eof() && (std::isdigit(peek()) || peek() == '-')) {
+    auto start_line = this->current_line;
+    auto start_col = this->current_col;
+    std::string text;
+    if (peek() == '-') {
+      text = consume(1);
+    }
+    if (!is_eof() && std::isdigit(peek())) {
+      std::string to_add = take_while<std::isdigit>();
+      consume(to_add.length());
+      text += to_add;
+      return bytecode::Token(bytecode::TokenKind::INT, text, start_line, start_col, this->current_line, this->current_col);
+    } else if (text == "-") {
+      this->rest = "-" + this->rest;
+      this->current_col--;
+    }
+  }
+  return std::nullopt;
+}
+
+std::optional<bytecode::Token> bytecode::Lexer::lex_identifier_or_keyword() {
+  if (!is_eof() && is_identifier_start(peek())) {
+    auto start_line = this->current_line;
+    auto start_col = this->current_col;
+    std::string text = take_while<is_identifier_continue>();
+    consume(text.length());
+    bytecode::TokenKind token_kind = bytecode::TokenKind::IDENTIFIER;
+    for (const auto &[keyword, keyword_token] : keyword_to_token) {
+      if (text == keyword) {
+        token_kind = keyword_token;
+        break;
+      }
+    }
+    return bytecode::Token(token_kind, text, start_line, start_col, this->current_line, this->current_col);
+  }
+  return std::nullopt;
+}
+
+std::optional<bytecode::Token> bytecode::Lexer::lex_stringliteral() {
+  if (!is_eof() && peek() == '"') {
+    auto start_line = this->current_line;
+    auto start_col = this->current_col;
+    std::ostringstream oss;
+    oss << consume(1);
+    while (!is_eof() && peek() != '"') {
+      if (peek() == '\\') {
+        oss << consume(1);
+        if (!is_eof()) {
+          char escaped = peek();
+          if (escaped == '\\' || escaped == 'n' || escaped == 't' ||
+              escaped == '"') {
+            oss << consume(1);
+          } else {
+            std::cerr << "Error: Invalid escape sequence '\\" << escaped
+                      << "' at line " << current_line << ", column "
+                      << current_col << std::endl;
+            std::exit(1);
+          }
+        }
+      } else {
+        oss << consume(1);
+      }
+    }
+
+    if (is_eof()) {
+      std::cerr << "Error: Unterminated string literal at line " << current_line
+                << ", column " << current_col << std::endl;
+      std::exit(1);
+    } else if (peek() == '"') {
+      oss << consume(1);
+    }
+
+    std::string text = oss.str();
+
+    std::string processed_text =
+        escape_string(text.substr(1, text.length() - 2));
+
+    return bytecode::Token(bytecode::TokenKind::STRING, processed_text, start_line, start_col, this->current_line, this->current_col);
+  }
+  return std::nullopt;
+}
+
+bool bytecode::Lexer::is_eof() const { return this->rest.empty(); }
+
+char bytecode::Lexer::peek() const { return this->rest[0]; }
+
+std::string bytecode::Lexer::consume(int n) {
+  for (size_t i = 0; i < (size_t)n; i++) {
+    if (i >= this->rest.length())
+      break;
+
+    if (this->rest[i] == '\n') {
+      this->current_col = 1;
+      this->current_line += 1;
+    } else {
+      this->current_col += 1;
+    }
+  }
+
+  std::string result = this->rest.substr(0, n);
+  this->rest = this->rest.substr(n);
+  return result;
+}
+
+template <int (*predicate)(int)>
+std::string bytecode::Lexer::take_while() const {
+  size_t i = 0;
+  while (i < this->rest.length() && predicate(this->rest[i])) {
     i++;
-    return tok;
+  }
+  return this->rest.substr(0, i);
 }
 
-std::optional<Token> Lexer::readNumber(const std::string &contents, int &i, int lineNum)
-{
-    if (!std::isdigit(contents[i]))
-        return std::nullopt;
-
-    int start = i;
-
-    // Handle the case where number starts with 0
-    if (contents[i] == '0')
-    {
-        i++;
-        // If next character is a digit, this is invalid (leading zero)
-        if (i < contents.size() && std::isdigit(contents[i]))
-        {
-            // Consume the rest of the invalid number
-            while (i < contents.size() && std::isdigit(contents[i]))
-            {
-                i++;
-            }
-            return Token{TokenType::Error, "invalid number with leading zero", lineNum};
-        }
-        // Single '0' is valid
-        return Token{TokenType::IntLiteral, "0", lineNum};
-    }
-
-    // Regular number - consume all digits
-    while (i < contents.size() && std::isdigit(contents[i]))
-    {
-        i++;
-    }
-
-    // Check if number is followed by invalid characters (like letters)
-    if (i < contents.size() && (std::isalpha(contents[i]) || contents[i] == '_'))
-    {
-        // This is an invalid token like "123abc" or "456_"
-        int errorStart = start;
-        while (i < contents.size() && (std::isalnum(contents[i]) || contents[i] == '_'))
-        {
-            i++;
-        }
-        return Token{TokenType::Error,
-                     "invalid token '" + contents.substr(errorStart, i - errorStart) + "'", lineNum};
-    }
-
-    return Token{TokenType::IntLiteral, contents.substr(start, i - start), lineNum};
-}
-
-static bool isValidChar(char c)
-{
-    // ASCII values between 32 and 126 inclusive, excluding quote (") and backslash (\)
-    return (32 <= c && c <= 126 && c != '"' && c != '\\');
-}
-
-std::optional<Token> Lexer::readString(const std::string &contents, int &i, int lineNum)
-{
-    if (contents[i] != '"')
-        return std::nullopt;
-
-    int start = i;
-    i++;                       // skip opening quote
-    std::string result = "\""; // include opening quote in result
-    bool hasError = false;
-    std::string errorMsg = "";
-
-    while (i < contents.size())
-    {
-        char c = contents[i];
-
-        // Check for closing quote
-        if (c == '"')
-        {
-            result += '"'; // include closing quote
-            i++;
-            if (hasError)
-            {
-                return Token{TokenType::Error, errorMsg, lineNum};
-            }
-            return Token{TokenType::StringLiteral, result, lineNum};
-        }
-
-        // Handle escape sequences
-        if (c == '\\')
-        {
-            if (i + 1 >= contents.size())
-            {
-                return Token{TokenType::Error, "unterminated escape sequence", lineNum};
-            }
-            char next = contents[i + 1];
-            switch (next)
-            {
-            case '"':
-                result += "\\\"";
-                i += 2;
-                break;
-            case '\\':
-                result += "\\\\";
-                i += 2;
-                break;
-            case 'n':
-                result += "\\n";
-                i += 2;
-                break;
-            case 't':
-                result += "\\t";
-                i += 2;
-                break;
-            default:
-                // Invalid escape sequence
-                if (!hasError)
-                {
-                    hasError = true;
-                    errorMsg = std::string("invalid escape sequence \\") + next;
-                }
-                result += "\\";
-                result += next;
-                i += 2;
-                break;
-            }
-        }
-        // Handle regular characters
-        else if (isValidChar(c))
-        {
-            result.push_back(c);
-            i++;
-        }
-        // Handle invalid characters in string
-        else
-        {
-            if (!hasError)
-            {
-                hasError = true;
-                if (c < 32 || c > 126)
-                {
-                    errorMsg = "invalid character in string (ASCII " + std::to_string(static_cast<int>(c)) + ")";
-                }
-                else
-                {
-                    errorMsg = std::string("invalid character in string: '") + c + "'";
-                }
-            }
-            // Continue parsing but mark as error
-            result.push_back(c);
-            i++;
-        }
-    }
-
-    // Reached end of line without closing quote
-    return Token{TokenType::Error, "unterminated string literal", lineNum};
-}
-
-static const std::unordered_map<std::string, TokenType> keywordTable = {
-    {"global", TokenType::Keyword},
-    {"return", TokenType::Keyword},
-    {"while", TokenType::Keyword},
-    {"if", TokenType::Keyword},
-    {"else", TokenType::Keyword},
-    {"fun", TokenType::Keyword},
-    {"None", TokenType::Keyword},
-    {"true", TokenType::BooleanLiteral},
-    {"false", TokenType::BooleanLiteral}};
-
-std::optional<Token> Lexer::readIdentifierOrKeyword(const std::string &contents, int &i, int lineNum)
-{
-    if (!std::isalpha(contents[i]) && contents[i] != '_')
-        return std::nullopt;
-
-    int start = i;
-
-    // Consume first character (letter or underscore)
-    i++;
-
-    // Consume remaining alphanumeric characters and underscores
-    while (i < contents.size() && (std::isalnum(contents[i]) || contents[i] == '_'))
-        i++;
-
-    std::string word = contents.substr(start, i - start);
-
-    // Check for keywords and boolean literals
-    auto it = keywordTable.find(word);
-    if (it != keywordTable.end())
-        return Token{it->second, word, lineNum};
-
-    return Token{TokenType::Identifier, word, lineNum};
-}
-
-std::optional<Token> Lexer::readComparison(const std::string &contents, int &i, int lineNum)
-{
-    if (i + 1 < contents.size())
-    {
-        std::string two = contents.substr(i, 2);
-        if (two == "<=")
-        {
-            i += 2;
-            return Token{TokenType::Leq, two, lineNum};
-        }
-        else if (two == ">=")
-        {
-            i += 2;
-            return Token{TokenType::Geq, two, lineNum};
-        }
-        else if (two == "==")
-        {
-            i += 2;
-            return Token{TokenType::Eq, two, lineNum};
-        }
-    }
-    if (i < contents.size())
-    {
-        if (contents[i] == '<')
-        {
-            return Token{TokenType::Lt, std::string(1, contents[i++]), lineNum};
-        }
-        if (contents[i] == '>')
-        {
-            return Token{TokenType::Gt, std::string(1, contents[i++]), lineNum};
-        }
-    }
-
-    return std::nullopt;
-}
-
-Lexer::Lexer(const std::string &input) : input_(input) {}
-
-std::vector<Token> Lexer::lex()
-{
-    std::stringstream lines(input_);
-    std::string line;
-    int numLines = 0;
-
-    while (std::getline(lines, line))
-    {
-        numLines++;
-
-        // Process the line character by character
-        for (int i = 0; i < line.size();)
-        {
-            // Skip comments
-            if (isComment(line, i))
-            {
-                break;
-            }
-
-            // Skip whitespace
-            if (isWhitespace(line[i]))
-            {
-                i++;
-                continue;
-            }
-
-            std::optional<Token> t;
-
-            // Try to read different token types in order of precedence
-
-            // 1. String literals (must be before other symbols because of quote)
-            if ((t = readString(line, i, numLines)).has_value())
-            {
-                addToken(t.value());
-                continue;
-            }
-
-            // 2. Numbers (must be before identifiers to avoid confusion)
-            if ((t = readNumber(line, i, numLines)).has_value())
-            {
-                addToken(t.value());
-                continue;
-            }
-
-            // 3. Identifiers and keywords
-            if ((t = readIdentifierOrKeyword(line, i, numLines)).has_value())
-            {
-                addToken(t.value());
-                continue;
-            }
-
-            // 4. Comparison operators (multi-character, before single-character)
-            if ((t = readComparison(line, i, numLines)).has_value())
-            {
-                addToken(t.value());
-                continue;
-            }
-
-            // 5. Single-character symbols
-            if ((t = readSymbol(line, i, numLines)).has_value())
-            {
-                handleBrackets(t.value());
-                addToken(t.value());
-                continue;
-            }
-
-            // 6. If we get here, we have an unrecognized character sequence
-            // This should be rare due to our earlier validation, but handle it
-            std::string unrecognizedChar(1, line[i]);
-            addToken(Token{TokenType::Error,
-                           "unrecognized character '" + unrecognizedChar + "'", numLines});
-            i++;
-        }
-    }
-
-    // Check for unmatched opening brackets at end of input
-    while (!stack_.empty())
-    {
-        Token t = stack_.top();
-        addToken(Token{TokenType::Error, "unmatched '" + t.str + "'", t.line});
-        stack_.pop();
-    }
-
-    addToken(Token{TokenType::EoF, "", numLines});
-    return tokens_;
-}
-
-void Lexer::printTokens(std::ostream &outstream)
-{
-    for (const Token &t : tokens_)
-    {
-        std::string type = "";
-
-        switch (t.type)
-        {
-        case TokenType::StringLiteral:
-            type = " STRINGLITERAL";
-            break;
-        case TokenType::IntLiteral:
-            type = " INTLITERAL";
-            break;
-        case TokenType::BooleanLiteral:
-            type = " BOOLEANLITERAL";
-            break;
-        case TokenType::Identifier:
-            type = " IDENTIFIER";
-            break;
-        default:
-            break;
-        }
-
-        if (t.type != TokenType::EoF && t.type != TokenType::Error)
-            outstream << t.line << type << " " << t.str << std::endl;
-    }
-}
-
-void Lexer::printErrors(std::ostream &outstream)
-{
-    for (const Token &t : tokens_)
-    {
-        std::string type = "";
-
-        switch (t.type)
-        {
-        case TokenType::Error:
-            type = " ERROR line";
-            break;
-        case TokenType::StringLiteral:
-            type = " STRINGLITERAL";
-            break;
-        case TokenType::IntLiteral:
-            type = " INTLITERAL";
-            break;
-        case TokenType::BooleanLiteral:
-            type = " BOOLEANLITERAL";
-            break;
-        case TokenType::Identifier:
-            type = " IDENTIFIER";
-            break;
-        default:
-            break;
-        }
-
-        if (t.type != TokenType::EoF)
-            outstream << t.line << type << " " << t.str << std::endl;
-    }
-}
-
-void Lexer::addToken(const Token &t)
-{
-    tokens_.push_back(t);
-}
-
-void Lexer::handleBrackets(const Token &t)
-{
-    switch (t.type)
-    {
-    case TokenType::LBrace:
-    case TokenType::LParen:
-    case TokenType::LSquareBrace:
-        stack_.push(t);
+std::string bytecode::Lexer::escape_string(const std::string &str) {
+  std::string result;
+  for (size_t i = 0; i < str.length(); i++) {
+    if (str[i] == '\\' && i + 1 < str.length()) {
+      switch (str[i + 1]) {
+      case '\\':
+        result += '\\';
         break;
-    case TokenType::RBrace:
-        if (!stack_.empty() && stack_.top().type == TokenType::LBrace)
-            stack_.pop();
-        else
-            addToken(Token{TokenType::Error, "unmatched '}'", t.line});
+      case '"':
+        result += '"';
         break;
-    case TokenType::RParen:
-        if (!stack_.empty() && stack_.top().type == TokenType::LParen)
-            stack_.pop();
-        else
-            addToken(Token{TokenType::Error, "unmatched ')'", t.line});
+      case 'n':
+        result += '\n';
         break;
-    case TokenType::RSquareBrace:
-        if (!stack_.empty() && stack_.top().type == TokenType::LSquareBrace)
-            stack_.pop();
-        else
-            addToken(Token{TokenType::Error, "unmatched ']'", t.line});
+      case 't':
+        result += '\t';
         break;
-    default:
+      default:
+        result += str[i + 1];
         break;
+      }
+      i++; // Skip the next character
+    } else {
+      result += str[i];
     }
+  }
+  return result;
+}
+
+std::vector<bytecode::Token> bytecode::lex(const std::string &contents) {
+  return bytecode::Lexer(contents).lex();
 }

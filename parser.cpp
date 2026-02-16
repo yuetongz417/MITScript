@@ -1,701 +1,64 @@
-#include "parser.hpp"
-
+#include "./parser.hpp"
+#include "./types.hpp"
+#include "./instructions.hpp"
+#include "./lexer.hpp"
+#include <cassert>
 #include <iostream>
-#include <algorithm>
 #include <optional>
 
-Parser::Parser(const std::vector<Token> &tokens) : tokens_(tokens), current_(0) {}
+bytecode::Parser::Parser(const std::vector<Token> &tokens) : tokens(tokens), pos(0) {}
 
-std::optional<std::unique_ptr<ast::ASTNode>> Parser::parse()
-{
-    try
-    {
-        return program();
+bytecode::Function* bytecode::Parser::parse() {
+    if (is_eof()) {
+        std::cerr << "Error: Empty input" << std::endl;
+        std::exit(1);
     }
-    catch (const std::exception &e)
-    {
-        // Print the error message using std::cerr
-        std::cerr << "Caught exception: " << e.what() << std::endl;
-        return std::nullopt;
+
+    auto function = parse_function();
+    if (!function) {
+        std::cerr << "Error: Failed to parse function" << std::endl;
+        std::exit(1);
     }
+
+    if (!is_eof()) {
+        const auto& current = peek();
+        std::cerr << "Error: Unexpected tokens after function definition at line "
+                  << current.start_line << ", column " << current.start_col << std::endl;
+        std::exit(1);
+    }
+
+    return function;
 }
 
-// Grammar rules
-std::unique_ptr<ast::ASTNode> Parser::program()
-{
-    std::vector<std::unique_ptr<ast::ASTNode>> statements;
-
-    while (!isAtEnd())
-    {
-        auto stmt = statement();
-        if (stmt)
-        {
-            statements.push_back(std::move(stmt));
-        }
-    }
-
-    return std::make_unique<ast::Block>(std::move(statements));
+bool bytecode::Parser::is_eof() const {
+    return pos >= tokens.size() || peek().kind == TokenKind::EOF_TOKEN;
 }
 
-std::unique_ptr<ast::ASTNode> Parser::statement()
-{
-    // Check if the current token is a keyword
-    if (check(TokenType::Keyword))
-    {
-        std::string keyword = peek().str;
-        if (keyword == "if")
-        {
-            return ifStatement();
-        }
-        else if (keyword == "while")
-        {
-            return whileStatement();
-        }
-        else if (keyword == "return")
-        {
-            return returnStatement();
-        }
-        else if (keyword == "global")
-        {
-            return globalDeclaration();
-        }
-    }
-
-    // Parse assignment or call statement
-    return parse_assignment_or_call();
+bool bytecode::Parser::check(TokenKind kind) const {
+    if (is_eof()) return false;
+    return peek().kind == kind;
 }
 
-std::unique_ptr<ast::ASTNode> Parser::parse_assignment_or_call()
-{
-    // First try to parse a location (could be complex with dots, brackets, etc.)
-    auto expr = location();
-
-    if (!expr)
-    {
-        throw std::runtime_error("Invalid expression");
+const bytecode::Token& bytecode::Parser::peek() const {
+    if (pos >= tokens.size()) {
+        static bytecode::Token eof_token(TokenKind::EOF_TOKEN, "", 0, 0, 0, 0);
+        return eof_token;
     }
-
-    if (check(TokenType::Assign))
-    {
-        return assignment(std::move(expr));
-    }
-
-    if (check(TokenType::LParen))
-    {
-        expr = function_call(std::move(expr));
-        if (!consume(TokenType::Semicolon, "Expect ';' after arguments"))
-        {
-            throw std::runtime_error("Invalid call expression");
-        }
-        return expr;
-    }
-    throw std::runtime_error("Invalid expression");
+    return tokens[pos];
 }
 
-std::unique_ptr<ast::ASTNode> Parser::function_call(std::unique_ptr<ast::ASTNode> expr)
-{
-    consume(TokenType::LParen, "Expect '(' after function name");
-    // Function call
-    std::vector<std::unique_ptr<ast::ASTNode>> args;
-    if (!check(TokenType::RParen))
-    {
-        do
-        {
-            auto arg = expression();
-            if (!arg)
-                throw std::runtime_error("Invalid argument expression");
-            args.push_back(std::move(arg));
-        } while (match({TokenType::Comma}));
-    }
-    // Functions can have zero arguments according to the spec
-
-    if (!consume(TokenType::RParen, "Expect ')' after arguments"))
-    {
-        throw std::runtime_error("Invalid call expression");
-    }
-    return std::make_unique<ast::Call>(std::move(expr), std::move(args));
+const bytecode::Token& bytecode::Parser::previous() const {
+    return tokens[pos - 1];
 }
 
-std::unique_ptr<ast::ASTNode> Parser::location()
-{
-    auto expr = idTerm();
-    if (!expr)
-    {
-        throw std::runtime_error("Invalid expression");
-    }
-
-    while (true)
-    {
-        if (match({TokenType::Dot}))
-        {
-            // Field access
-            if (!check(TokenType::Identifier))
-            {
-                throw std::runtime_error("Expect identifier after '.'");
-            }
-            std::string field = advance().str;
-            expr = std::make_unique<ast::FieldDereference>(std::move(expr), std::move(field));
-        }
-        else if (match({TokenType::LSquareBrace}))
-        {
-            // Index access
-            auto index = expression();
-            if (!index || !consume(TokenType::RSquareBrace, "Expect ']' after index"))
-            {
-                throw std::runtime_error("Invalid index expression");
-            }
-            expr = std::make_unique<ast::IndexExpression>(std::move(expr), std::move(index));
-        }
-        else
-        {
-            break;
-        }
-    }
-    return expr;
+bytecode::Token bytecode::Parser::advance() {
+    if (!is_eof()) pos++;
+    return previous();
 }
 
-std::unique_ptr<ast::ASTNode> Parser::idTerm()
-{
-    if (check(TokenType::Identifier))
-    {
-        return std::make_unique<ast::Identifier>(advance().str);
-    }
-    throw std::runtime_error("Expected identifier");
-}
-
-std::unique_ptr<ast::ASTNode> Parser::assignment(std::unique_ptr<ast::ASTNode> location)
-{
-    if (!consume(TokenType::Assign, "Expected '='"))
-    {
-        throw std::runtime_error("Invalid assignment");
-    }
-
-    auto expr = expression();
-    if (!expr)
-    {
-        throw std::runtime_error("Invalid assignment expression");
-    }
-
-    if (!consume(TokenType::Semicolon, "Expect ';' after assignment"))
-    {
-        throw std::runtime_error("Invalid assignment");
-    }
-
-    return std::make_unique<ast::Assignment>(std::move(location), std::move(expr));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::block()
-{
-    if (!consume(TokenType::LBrace, "Expect '{'"))
-    {
-        throw std::runtime_error("Invalid block");
-    }
-
-    std::vector<std::unique_ptr<ast::ASTNode>> statements;
-
-    while (!check(TokenType::RBrace) && !isAtEnd())
-    {
-        auto stmt = statement();
-        if (stmt)
-        {
-            statements.push_back(std::move(stmt));
-        }
-    }
-
-    if (!consume(TokenType::RBrace, "Expect '}'"))
-    {
-        throw std::runtime_error("Invalid block");
-    }
-    return std::make_unique<ast::Block>(std::move(statements));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::ifStatement()
-{
-    if (!consume(TokenType::Keyword, "Expect 'if'"))
-    {
-        throw std::runtime_error("Invalid if statement");
-    }
-
-    if (!consume(TokenType::LParen, "Expect '(' after 'if'"))
-    {
-        throw std::runtime_error("Invalid if statement");
-    }
-    auto condition = expression();
-    if (!condition || !consume(TokenType::RParen, "Expect ')' after if condition"))
-    {
-        throw std::runtime_error("Invalid if statement");
-    }
-
-    auto thenBranch = block();
-    if (!thenBranch)
-    {
-        throw std::runtime_error("Invalid if statement");
-    }
-
-    std::unique_ptr<ast::ASTNode> elseBranch = nullptr;
-    if (check(TokenType::Keyword) && peek().str == "else")
-    {
-        if (!consume(TokenType::Keyword, "Expect 'else'"))
-        {
-            throw std::runtime_error("Invalid else statement");
-        }
-        elseBranch = block();
-        if (!elseBranch)
-        {
-            throw std::runtime_error("Invalid else block");
-        }
-    }
-
-    return std::make_unique<ast::IfStatement>(std::move(condition), std::move(thenBranch), std::move(elseBranch));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::whileStatement()
-{
-    if (!consume(TokenType::Keyword, "Expect 'while'"))
-    {
-        throw std::runtime_error("Invalid while statement");
-    }
-
-    if (!consume(TokenType::LParen, "Expect '(' after 'while'"))
-    {
-        throw std::runtime_error("Invalid while statement");
-    }
-    auto condition = expression();
-    if (!condition || !consume(TokenType::RParen, "Expect ')' after while condition"))
-    {
-        throw std::runtime_error("Invalid while statement");
-    }
-
-    auto body = block();
-    if (!body)
-    {
-        throw std::runtime_error("Invalid while statement");
-    }
-
-    return std::make_unique<ast::WhileLoop>(std::move(condition), std::move(body));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::returnStatement()
-{
-    if (!consume(TokenType::Keyword, "Expect 'return'"))
-    {
-        throw std::runtime_error("Invalid return statement");
-    }
-
-    auto expr = expression();
-    if (!expr)
-    {
-        throw std::runtime_error("Invalid return statement");
-    }
-
-    if (!consume(TokenType::Semicolon, "Expect ';' after return value"))
-    {
-        throw std::runtime_error("Invalid return statement");
-    }
-    return std::make_unique<ast::Return>(std::move(expr));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::globalDeclaration()
-{
-    if (!consume(TokenType::Keyword, "Expect 'global'"))
-    {
-        throw std::runtime_error("Invalid global statement");
-    }
-
-    if (!check(TokenType::Identifier))
-    {
-        throw std::runtime_error("Expect identifier after 'global'");
-    }
-
-    std::string id = advance().str;
-    if (!consume(TokenType::Semicolon, "Expect ';' after global declaration"))
-    {
-        throw std::runtime_error("Invalid global declaration");
-    }
-
-    return std::make_unique<ast::Global>(std::move(id));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::expression()
-{
-    // Function declaration: fun ( [id+,] ) block
-    if (check(TokenType::Keyword) && peek().str == "fun")
-    {
-        return functionDeclaration();
-    }
-
-    // Record: { [id : expr ;]* }
-    if (check(TokenType::LBrace))
-    {
-        return record();
-    }
-
-    // Otherwise parse as logical_or (lowest precedence)
-    return logical_or();
-}
-
-// Operator precedence from spec (highest to lowest):
-// - unary minus (highest)
-// *, / multiplication, division
-// +, - addition, subtraction
-// <, <=, >=, >, == relational
-// ! conditional not
-// & conditional and
-// | conditional or (lowest)
-
-std::unique_ptr<ast::ASTNode> Parser::logical_or()
-{
-    auto expr = logical_and();
-
-    while (match({TokenType::Or}))
-    {
-        auto right = logical_and();
-        if (!right)
-            throw std::runtime_error("Invalid logical OR expression");
-        expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Or, std::move(right));
-    }
-
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::logical_and()
-{
-    auto expr = logical_not();
-
-    while (match({TokenType::And}))
-    {
-        auto right = logical_not();
-        if (!right)
-            throw std::runtime_error("Invalid logical AND expression");
-        expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::And, std::move(right));
-    }
-
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::logical_not()
-{
-    if (match({TokenType::Not}))
-    {
-        auto expr = logical_not();
-        if (!expr)
-            throw std::runtime_error("Invalid logical NOT expression");
-        return std::make_unique<ast::UnaryExpression>(ast::UnaryExpression::UnaryOp::Not, std::move(expr));
-    }
-
-    return equality();
-}
-
-std::unique_ptr<ast::ASTNode> Parser::equality()
-{
-    auto expr = relational();
-
-    while (match({TokenType::Eq}))
-    {
-        auto right = relational();
-        if (!right)
-            throw std::runtime_error("Invalid equality expression");
-        expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Eq, std::move(right));
-    }
-
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::relational()
-{
-    auto expr = additive();
-
-    while (true)
-    {
-        if (match({TokenType::Lt}))
-        {
-            auto right = additive();
-            if (!right)
-                throw std::runtime_error("Invalid relational expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Lt, std::move(right));
-        }
-        else if (match({TokenType::Gt}))
-        {
-            auto right = additive();
-            if (!right)
-                throw std::runtime_error("Invalid relational expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Gt, std::move(right));
-        }
-        else if (match({TokenType::Leq}))
-        {
-            auto right = additive();
-            if (!right)
-                throw std::runtime_error("Invalid relational expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Leq, std::move(right));
-        }
-        else if (match({TokenType::Geq}))
-        {
-            auto right = additive();
-            if (!right)
-                throw std::runtime_error("Invalid relational expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Geq, std::move(right));
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::additive()
-{
-    auto expr = multiplicative();
-
-    while (true)
-    {
-        if (match({TokenType::Add}))
-        {
-            auto right = multiplicative();
-            if (!right)
-                throw std::runtime_error("Invalid additive expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Add, std::move(right));
-        }
-        else if (match({TokenType::Sub}))
-        {
-            auto right = multiplicative();
-            if (!right)
-                throw std::runtime_error("Invalid additive expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Sub, std::move(right));
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::multiplicative()
-{
-    auto expr = unary();
-
-    while (true)
-    {
-        if (match({TokenType::Mul}))
-        {
-            auto right = unary();
-            if (!right)
-                throw std::runtime_error("Invalid multiplicative expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Mul, std::move(right));
-        }
-        else if (match({TokenType::Div}))
-        {
-            auto right = unary();
-            if (!right)
-                throw std::runtime_error("Invalid multiplicative expression");
-            expr = std::make_unique<ast::BinaryExpression>(std::move(expr), ast::BinaryExpression::Div, std::move(right));
-        }
-        else
-        {
-            break;
-        }
-    }
-
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::unary()
-{
-    // Handle unary minus (highest precedence according to spec)
-    if (match({TokenType::Sub}))
-    {
-        auto expr = unary();
-        if (!expr)
-            throw std::runtime_error("Invalid unary expression");
-        return std::make_unique<ast::UnaryExpression>(ast::UnaryExpression::UnaryOp::Neg, std::move(expr));
-    }
-
-    // No unary operator, parse as primary
-    return primary();
-}
-
-std::unique_ptr<ast::ASTNode> Parser::primary()
-{
-    // Handle parenthesized expressions
-    if (match({TokenType::LParen}))
-    {
-        auto expr = logical_or(); // Parse full expression inside parens
-        if (!consume(TokenType::RParen, "Expect ')' after expression"))
-        {
-            throw std::runtime_error("Invalid parenthesized expression");
-        }
-        return expr;
-    }
-
-    // Handle literals
-    if (check(TokenType::IntLiteral))
-    {
-        int value = std::stoi(advance().str);
-        return std::make_unique<ast::IntegerConstant>(value);
-    }
-
-    if (check(TokenType::StringLiteral))
-    {
-        std::string value = advance().str;
-        value = value.substr(1, value.length() - 2); // Remove quotes
-        return std::make_unique<ast::StringConstant>(std::move(value));
-    }
-
-    if (check(TokenType::BooleanLiteral))
-    {
-        bool value = advance().str == "true";
-        return std::make_unique<ast::BooleanConstant>(value);
-    }
-
-    if (check(TokenType::Keyword))
-    {
-        std::string keyword = peek().str;
-        if (keyword == "None")
-        {
-            advance();
-            return std::make_unique<ast::NoneConstant>();
-        }
-    }
-
-    // Handle location (identifier, field access, index, call)
-    return parse_location_or_call();
-}
-
-std::unique_ptr<ast::ASTNode> Parser::parse_location_or_call()
-{
-    // First try to parse a location
-    auto expr = location();
-
-    if (!expr)
-    {
-        throw std::runtime_error("Invalid expression");
-    }
-    if (check(TokenType::LParen))
-    {
-        return function_call(std::move(expr));
-    }
-    return expr;
-}
-
-std::unique_ptr<ast::ASTNode> Parser::functionDeclaration()
-{
-    if (!(consume(TokenType::Keyword, "Expect 'fun'")))
-    {
-        throw std::runtime_error("Invalid function declaration");
-    }
-
-    if (!consume(TokenType::LParen, "Expect '(' after 'fun'"))
-    {
-        throw std::runtime_error("Invalid function declaration");
-    }
-
-    std::vector<std::string> parameters;
-    if (!check(TokenType::RParen))
-    {
-        do
-        {
-            if (!check(TokenType::Identifier))
-            {
-                throw std::runtime_error("Expect parameter name");
-            }
-            parameters.push_back(advance().str);
-        } while (match({TokenType::Comma}));
-    }
-    // Functions can have zero parameters according to the spec
-
-    if (!consume(TokenType::RParen, "Expect ')' after parameters"))
-    {
-        throw std::runtime_error("Invalid function declaration");
-    }
-
-    auto body = block();
-    if (!body)
-    {
-        throw std::runtime_error("Invalid function body");
-    }
-
-    return std::make_unique<ast::FunctionDeclaration>(std::move(parameters), std::move(body));
-}
-
-std::unique_ptr<ast::ASTNode> Parser::record()
-{
-    if (!consume(TokenType::LBrace, "Expect '{'"))
-    {
-        throw std::runtime_error("Invalid record");
-    }
-
-    std::vector<std::pair<std::string, std::unique_ptr<ast::ASTNode>>> fields;
-
-    while (!check(TokenType::RBrace) && !isAtEnd())
-    {
-        if (!check(TokenType::Identifier))
-        {
-            throw std::runtime_error("Expect field name");
-        }
-
-        std::string key = advance().str;
-
-        if (!consume(TokenType::Colon, "Expect ':' after record key"))
-        {
-            throw std::runtime_error("Invalid record field");
-        }
-        auto value = expression();
-        if (!value || !consume(TokenType::Semicolon, "Expect ';' after record value"))
-        {
-            throw std::runtime_error("Invalid record field");
-        }
-
-        fields.push_back({key, std::move(value)});
-    }
-
-    if (!consume(TokenType::RBrace, "Expect '}' after record"))
-    {
-        throw std::runtime_error("Invalid record");
-    }
-    return std::make_unique<ast::Record>(std::move(fields));
-}
-
-// Helper methods
-bool Parser::isAtEnd() const
-{
-    return current_ >= tokens_.size() || (current_ < tokens_.size() && tokens_[current_].type == TokenType::EoF);
-}
-
-const Token &Parser::peek() const
-{
-    if (isAtEnd())
-    {
-        static Token eofToken{TokenType::None, "", -1};
-        return eofToken;
-    }
-    return tokens_[current_];
-}
-
-const Token &Parser::previous() const
-{
-    if (current_ > 0)
-        return tokens_[current_ - 1];
-
-    static Token dummyToken{TokenType::Error, "", 0};
-    return dummyToken;
-}
-
-bool Parser::check(TokenType type) const
-{
-    if (isAtEnd())
-        return false;
-    return peek().type == type;
-}
-
-bool Parser::match(std::vector<TokenType> types)
-{
-    for (TokenType type : types)
-    {
-        if (check(type))
-        {
+bool bytecode::Parser::match(std::initializer_list<TokenKind> kinds) {
+    for (TokenKind kind : kinds) {
+        if (check(kind)) {
             advance();
             return true;
         }
@@ -703,19 +66,301 @@ bool Parser::match(std::vector<TokenType> types)
     return false;
 }
 
-Token Parser::advance()
-{
-    if (!isAtEnd())
-        current_++;
-    return previous();
+bytecode::Token bytecode::Parser::consume(TokenKind kind, const std::string& message) {
+    if (check(kind)) return advance();
+
+    const bytecode::Token& current = peek();
+    std::cerr << "Error: " << message << " at line " << current.start_line
+              << ", column " << current.start_col << " (token: '" << current.text << "')" << std::endl;
+    std::exit(1);
 }
 
-bool Parser::consume(TokenType type, const std::string &message)
-{
-    if (check(type))
-    {
-        advance();
-        return true;
+bytecode::Function* bytecode::Parser::parse_function() {
+    consume(TokenKind::FUNCTION, "Expected 'function' keyword");
+    consume(TokenKind::LBRACE, "Expected '{' after function");
+
+    consume(TokenKind::FUNCTIONS, "Expected 'functions' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'functions'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'functions ='");
+    auto functions = parse_function_list_star();
+    consume(TokenKind::RBRACKET, "Expected ']' after functions list");
+    consume(TokenKind::COMMA, "Expected ',' after functions list");
+
+    consume(TokenKind::CONSTANTS, "Expected 'constants' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'constants'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'constants ='");
+    auto constants = parse_constant_list_star();
+    consume(TokenKind::RBRACKET, "Expected ']' after constants list");
+    consume(TokenKind::COMMA, "Expected ',' after constants list");
+
+    consume(TokenKind::PARAMETER_COUNT, "Expected 'parameter_count' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'parameter_count'");
+    auto param_count_token = consume(TokenKind::INT, "Expected integer for parameter count");
+    uint32_t param_count = safe_unsigned_cast(std::stoi(param_count_token.text));
+    consume(TokenKind::COMMA, "Expected ',' after parameter count");
+
+    consume(TokenKind::LOCAL_VARS, "Expected 'local_vars' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'local_vars'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'local_vars ='");
+    auto local_vars = parse_ident_list_star();
+    consume(TokenKind::RBRACKET, "Expected ']' after local variables list");
+    consume(TokenKind::COMMA, "Expected ',' after local variables list");
+
+    consume(TokenKind::LOCAL_REF_VARS, "Expected 'local_ref_vars' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'local_ref_vars'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'local_ref_vars ='");
+    auto local_ref_vars = parse_ident_list_star();
+    consume(TokenKind::RBRACKET, "Expected ']' after local reference variables list");
+    consume(TokenKind::COMMA, "Expected ',' after local reference variables list");
+
+    consume(TokenKind::FREE_VARS, "Expected 'free_vars' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'free_vars'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'free_vars ='");
+    auto free_vars = parse_ident_list_star();
+    consume(TokenKind::RBRACKET, "Expected ']' after free variables list");
+    consume(TokenKind::COMMA, "Expected ',' after free variables list");
+
+    consume(TokenKind::NAMES, "Expected 'names' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'names'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'names ='");
+    auto names = parse_ident_list_star();
+    consume(TokenKind::RBRACKET, "Expected ']' after names list");
+    consume(TokenKind::COMMA, "Expected ',' after names list");
+
+    consume(TokenKind::INSTRUCTIONS, "Expected 'instructions' keyword");
+    consume(TokenKind::ASSIGN, "Expected '=' after 'instructions'");
+    consume(TokenKind::LBRACKET, "Expected '[' after 'instructions ='");
+    auto instructions = parse_instruction_list();
+    consume(TokenKind::RBRACKET, "Expected ']' after instructions list");
+
+    consume(TokenKind::RBRACE, "Expected '}' to end function");
+
+    auto function = new bytecode::Function();
+    function->functions_ = *functions;
+    function->constants_ = *constants;
+    function->parameter_count_ = param_count;
+    function->local_vars_ = *local_vars;
+    function->local_reference_vars_ = *local_ref_vars;
+    function->free_vars_ = *free_vars;
+    function->names_ = *names;
+    function->instructions = *instructions;
+
+    delete functions;
+    delete constants;
+    delete local_vars;
+    delete local_ref_vars;
+    delete free_vars;
+    delete names;
+    delete instructions;
+
+    return function;
+}
+
+std::vector<bytecode::Function*>* bytecode::Parser::parse_function_list_star() {
+    if (check(TokenKind::RBRACKET)) {
+        return new std::vector<bytecode::Function*>();
     }
-    return false;
+    return parse_function_list_plus();
+}
+
+std::vector<bytecode::Function*>* bytecode::Parser::parse_function_list_plus() {
+    auto list = new std::vector<bytecode::Function*>();
+
+    if (check(TokenKind::FUNCTION)) {
+        auto func = parse_function();
+        list->push_back(func);
+    }
+
+    while (match({TokenKind::COMMA})) {
+        if (check(TokenKind::FUNCTION)) {
+            auto func = parse_function();
+            list->push_back(func);
+        }
+    }
+
+    return list;
+}
+
+std::vector<std::string>* bytecode::Parser::parse_ident_list_star() {
+    if (check(TokenKind::RBRACKET)) {
+        return new std::vector<std::string>();
+    }
+    return parse_ident_list_plus();
+}
+
+std::vector<std::string>* bytecode::Parser::parse_ident_list_plus() {
+    auto list = new std::vector<std::string>();
+
+    auto ident = consume(TokenKind::IDENTIFIER, "Expected identifier");
+    list->push_back(ident.text);
+
+    while (match({TokenKind::COMMA})) {
+        if (check(TokenKind::IDENTIFIER)) {
+            auto next_ident = consume(TokenKind::IDENTIFIER, "Expected identifier after comma");
+            list->push_back(next_ident.text);
+        }
+    }
+
+    return list;
+}
+
+bytecode::Constant* bytecode::Parser::parse_constant() {
+    if (match({TokenKind::NONE})) {
+        return new bytecode::Constant::None();
+    } else if (match({TokenKind::TRUE})) {
+        return new bytecode::Constant::Boolean(true);
+    } else if (match({TokenKind::FALSE})) {
+        return new bytecode::Constant::Boolean(false);
+    } else if (check(TokenKind::STRING)) {
+        auto str_token = consume(TokenKind::STRING, "Expected string constant");
+        return new bytecode::Constant::String(str_token.text);
+    } else if (check(TokenKind::INT)) {
+        auto int_token = consume(TokenKind::INT, "Expected integer constant");
+        return new bytecode::Constant::Integer(safe_cast(std::stoi(int_token.text)));
+    } else {
+        const auto& current = peek();
+        std::cerr << "Error: Expected constant at line " << current.start_line
+                  << ", column " << current.start_col << std::endl;
+        std::exit(1);
+    }
+}
+
+std::vector<bytecode::Constant*>* bytecode::Parser::parse_constant_list_star() {
+    if (check(TokenKind::RBRACKET)) {
+        return new std::vector<bytecode::Constant*>();
+    }
+    return parse_constant_list_plus();
+}
+
+std::vector<bytecode::Constant*>* bytecode::Parser::parse_constant_list_plus() {
+    auto list = new std::vector<bytecode::Constant*>();
+
+    auto constant = parse_constant();
+    list->push_back(constant);
+
+    while (match({TokenKind::COMMA})) {
+        if (!check(TokenKind::RBRACKET)) {
+            auto next_constant = parse_constant();
+            list->push_back(next_constant);
+        }
+    }
+
+    return list;
+}
+
+bytecode::Instruction bytecode::Parser::parse_instruction() {
+    if (match({TokenKind::LOAD_CONST})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for load_const");
+        return bytecode::Instruction(bytecode::Operation::LoadConst, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::LOAD_FUNC})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for load_func");
+        return bytecode::Instruction(bytecode::Operation::LoadFunc, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::LOAD_LOCAL})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for load_local");
+        return bytecode::Instruction(bytecode::Operation::LoadLocal, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::STORE_LOCAL})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for store_local");
+        return bytecode::Instruction(bytecode::Operation::StoreLocal, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::LOAD_GLOBAL})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for load_global");
+        return bytecode::Instruction(bytecode::Operation::LoadGlobal, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::STORE_GLOBAL})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for store_global");
+        return bytecode::Instruction(bytecode::Operation::StoreGlobal, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::PUSH_REF})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for push_ref");
+        return bytecode::Instruction(bytecode::Operation::PushReference, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::LOAD_REF})) {
+        return bytecode::Instruction(bytecode::Operation::LoadReference, std::nullopt);
+    } else if (match({TokenKind::STORE_REF})) {
+        return bytecode::Instruction(bytecode::Operation::StoreReference, std::nullopt);
+    } else if (match({TokenKind::ALLOC_RECORD})) {
+        return bytecode::Instruction(bytecode::Operation::AllocRecord, std::nullopt);
+    } else if (match({TokenKind::FIELD_LOAD})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for field_load");
+        return bytecode::Instruction(bytecode::Operation::FieldLoad, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::FIELD_STORE})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for field_store");
+        return bytecode::Instruction(bytecode::Operation::FieldStore, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::INDEX_LOAD})) {
+        return bytecode::Instruction(bytecode::Operation::IndexLoad, std::nullopt);
+    } else if (match({TokenKind::INDEX_STORE})) {
+        return bytecode::Instruction(bytecode::Operation::IndexStore, std::nullopt);
+    } else if (match({TokenKind::ALLOC_CLOSURE})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for alloc_closure");
+        return bytecode::Instruction(bytecode::Operation::AllocClosure, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::CALL})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for call");
+        return bytecode::Instruction(bytecode::Operation::Call, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::RETURN})) {
+        return bytecode::Instruction(bytecode::Operation::Return, std::nullopt);
+    } else if (match({TokenKind::ADD})) {
+        return bytecode::Instruction(bytecode::Operation::Add, std::nullopt);
+    } else if (match({TokenKind::SUB})) {
+        return bytecode::Instruction(bytecode::Operation::Sub, std::nullopt);
+    } else if (match({TokenKind::MUL})) {
+        return bytecode::Instruction(bytecode::Operation::Mul, std::nullopt);
+    } else if (match({TokenKind::DIV})) {
+        return bytecode::Instruction(bytecode::Operation::Div, std::nullopt);
+    } else if (match({TokenKind::NEG})) {
+        return bytecode::Instruction(bytecode::Operation::Neg, std::nullopt);
+    } else if (match({TokenKind::GT})) {
+        return bytecode::Instruction(bytecode::Operation::Gt, std::nullopt);
+    } else if (match({TokenKind::GEQ})) {
+        return bytecode::Instruction(bytecode::Operation::Geq, std::nullopt);
+    } else if (match({TokenKind::EQ})) {
+        return bytecode::Instruction(bytecode::Operation::Eq, std::nullopt);
+    } else if (match({TokenKind::AND})) {
+        return bytecode::Instruction(bytecode::Operation::And, std::nullopt);
+    } else if (match({TokenKind::OR})) {
+        return bytecode::Instruction(bytecode::Operation::Or, std::nullopt);
+    } else if (match({TokenKind::NOT})) {
+        return bytecode::Instruction(bytecode::Operation::Not, std::nullopt);
+    } else if (match({TokenKind::GOTO})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for goto");
+        return bytecode::Instruction(bytecode::Operation::Goto, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::IF})) {
+        auto operand = consume(TokenKind::INT, "Expected integer operand for if");
+        return bytecode::Instruction(bytecode::Operation::If, safe_cast(std::stoi(operand.text)));
+    } else if (match({TokenKind::DUP})) {
+        return bytecode::Instruction(bytecode::Operation::Dup, std::nullopt);
+    } else if (match({TokenKind::SWAP})) {
+        return bytecode::Instruction(bytecode::Operation::Swap, std::nullopt);
+    } else if (match({TokenKind::POP})) {
+        return bytecode::Instruction(bytecode::Operation::Pop, std::nullopt);
+    } else {
+        const auto& current = peek();
+        std::cerr << "Error: Expected instruction at line " << current.start_line
+                  << ", column " << current.start_col << std::endl;
+        std::exit(1);
+    }
+}
+
+std::vector<bytecode::Instruction>* bytecode::Parser::parse_instruction_list() {
+    auto list = new std::vector<bytecode::Instruction>();
+
+    while (!check(TokenKind::RBRACKET) && !is_eof()) {
+        auto instruction = parse_instruction();
+        list->push_back(instruction);
+    }
+
+    return list;
+}
+
+int32_t bytecode::Parser::safe_cast(int64_t value) {
+    int32_t new_value = static_cast<int32_t>(value);
+    assert(new_value == value);
+    return new_value;
+}
+
+uint32_t bytecode::Parser::safe_unsigned_cast(int64_t value) {
+    uint32_t new_value = static_cast<uint32_t>(value);
+    assert(new_value == value);
+    return new_value;
+}
+
+bytecode::Function* bytecode::parse(const std::string &contents) {
+    auto tokens = bytecode::lex(contents);
+    auto parser = bytecode::Parser(tokens);
+    return parser.parse();
 }

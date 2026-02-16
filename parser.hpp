@@ -1,62 +1,44 @@
 #pragma once
 
-#include "lexer.hpp"
-#include "ast.hpp"
-#include <string>
-#include <map>
-#include <memory>
+#include "./token.hpp"
+#include "./types.hpp"
 #include <vector>
-#include <optional>
 
-class Parser
-{
+namespace bytecode {
+
+class Parser {
 public:
-    explicit Parser(const std::vector<Token> &tokens);
+    Parser(const std::vector<Token>& tokens);
 
-    std::optional<std::unique_ptr<ast::ASTNode>> parse();
+    Function* parse();
 
 private:
-    const std::vector<Token> &tokens_;
-    size_t current_;
+    std::vector<Token> tokens;
+    size_t pos;
 
-    // Helper methods
-    bool isAtEnd() const;
-    const Token &peek() const;
-    const Token &previous() const;
-    bool check(TokenType type) const;
-    bool match(std::vector<TokenType> types);
+    bool is_eof() const;
+    bool check(TokenKind kind) const;
+    const Token& peek() const;
+    const Token& previous() const;
     Token advance();
-    void synchronize();
-    bool consume(TokenType type, const std::string &message);
+    bool match(std::initializer_list<TokenKind> kinds);
+    Token consume(TokenKind kind, const std::string& message);
 
-    // Grammar rules
-    std::unique_ptr<ast::ASTNode> program();
-    std::unique_ptr<ast::ASTNode> statement();
-    std::unique_ptr<ast::ASTNode> block();
-    std::unique_ptr<ast::ASTNode> expression();
-    std::unique_ptr<ast::ASTNode> location();
+    Function* parse_function();
+    std::vector<Function*>* parse_function_list_star();
+    std::vector<Function*>* parse_function_list_plus();
+    std::vector<std::string>* parse_ident_list_star();
+    std::vector<std::string>* parse_ident_list_plus();
+    Constant* parse_constant();
+    std::vector<Constant*>* parse_constant_list_star();
+    std::vector<Constant*>* parse_constant_list_plus();
+    Instruction parse_instruction();
+    std::vector<Instruction>* parse_instruction_list();
 
-    // Statement types
-    std::unique_ptr<ast::ASTNode> ifStatement();
-    std::unique_ptr<ast::ASTNode> whileStatement();
-    std::unique_ptr<ast::ASTNode> returnStatement();
-    std::unique_ptr<ast::ASTNode> functionDeclaration();
-    std::unique_ptr<ast::ASTNode> globalDeclaration();
-    std::unique_ptr<ast::ASTNode> record();
-
-    std::unique_ptr<ast::ASTNode> idTerm();
-    std::unique_ptr<ast::ASTNode> assignment(std::unique_ptr<ast::ASTNode> loc);
-    std::unique_ptr<ast::ASTNode> parse_assignment_or_call();
-    std::unique_ptr<ast::ASTNode> function_call(std::unique_ptr<ast::ASTNode> expr);
-    std::unique_ptr<ast::ASTNode> parse_location_or_call();
-
-    std::unique_ptr<ast::ASTNode> logical_or();     // Lowest precedence: |
-    std::unique_ptr<ast::ASTNode> logical_and();    // &
-    std::unique_ptr<ast::ASTNode> logical_not();    // !
-    std::unique_ptr<ast::ASTNode> equality();       // ==
-    std::unique_ptr<ast::ASTNode> relational();     // <, >, <=, >=
-    std::unique_ptr<ast::ASTNode> additive();       // +, -
-    std::unique_ptr<ast::ASTNode> multiplicative(); // *, /
-    std::unique_ptr<ast::ASTNode> unary();          // unary - (highest precedence)
-    std::unique_ptr<ast::ASTNode> primary();        // literals, identifiers, ()
+    int32_t safe_cast(int64_t value);
+    uint32_t safe_unsigned_cast(int64_t value);
 };
+
+Function* parse(const std::string &contents);
+
+} // namespace bytecode
